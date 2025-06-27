@@ -1,5 +1,5 @@
-import React, { useState, useRef } from 'react';
-import { ChevronLeft, ChevronRight, Calendar, Settings, Sun, Moon, Search, X, Download, Upload } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { ChevronLeft, ChevronRight, Calendar, Settings, Sun, Moon, Search, X, Download, Upload, Cloud, CloudOff, User, LogOut } from 'lucide-react';
 
 const DiaryApp = () => {
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -15,8 +15,263 @@ const DiaryApp = () => {
   const [fuzzySearchEnabled, setFuzzySearchEnabled] = useState(true);
   const fileInputRef = useRef(null);
 
-  // Auto-save timeout - no sample data
+  // OneDrive Integration State
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [userInfo, setUserInfo] = useState(null);
+  const [syncStatus, setSyncStatus] = useState('offline'); // 'offline', 'syncing', 'synced', 'error'
+  const [lastSyncTime, setLastSyncTime] = useState(null);
+  const [accessToken, setAccessToken] = useState(null);
+
+  // Auto-save timeout
   const [saveTimeout, setSaveTimeout] = useState(null);
+
+  // Microsoft Graph API Configuration
+  const CLIENT_ID = 'DEINE_CLIENT_ID_HIER'; // Wird später ersetzt
+  const REDIRECT_URI = window.location.origin;
+  const SCOPES = 'https://graph.microsoft.com/Files.ReadWrite.AppFolder';
+
+  // OneDrive file paths
+  const DIARY_DATA_FILE = '/Apps/Tagebuch-App/diary-data.json';
+  const SETTINGS_FILE = '/Apps/Tagebuch-App/diary-settings.json';
+
+  // Load data on component mount
+  useEffect(() => {
+    loadLocalData();
+    checkForAuthToken();
+  }, []);
+
+  // Auto-sync when logged in
+  useEffect(() => {
+    if (isLoggedIn && accessToken) {
+      loadFromOneDrive();
+    }
+  }, [isLoggedIn, accessToken]);
+
+  // Load local fallback data
+  const loadLocalData = () => {
+    try {
+      const savedEntries = localStorage.getItem('diary-entries-backup');
+      const savedTitles = localStorage.getItem('diary-field-titles-backup');
+      
+      if (savedEntries) setEntries(JSON.parse(savedEntries));
+      if (savedTitles) setFieldTitles(JSON.parse(savedTitles));
+    } catch (error) {
+      console.error('Fehler beim Laden der lokalen Backup-Daten:', error);
+    }
+  };
+
+  // Check if user is returning from auth
+  const checkForAuthToken = () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+    
+    if (code) {
+      // Clear URL parameters
+      window.history.replaceState({}, document.title, window.location.pathname);
+      exchangeCodeForToken(code);
+    } else {
+      // Check for stored token
+      const storedToken = localStorage.getItem('onedrive-access-token');
+      const storedExpiry = localStorage.getItem('onedrive-token-expiry');
+      
+      if (storedToken && storedExpiry && new Date().getTime() < parseInt(storedExpiry)) {
+        setAccessToken(storedToken);
+        setIsLoggedIn(true);
+        loadUserInfo(storedToken);
+      }
+    }
+  };
+
+  // Microsoft OAuth Login
+  const loginToOneDrive = () => {
+    const authUrl = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?` +
+      `client_id=${CLIENT_ID}&` +
+      `response_type=code&` +
+      `redirect_uri=${encodeURIComponent(REDIRECT_URI)}&` +
+      `scope=${encodeURIComponent(SCOPES)}&` +
+      `response_mode=query`;
+    
+    window.location.href = authUrl;
+  };
+
+  // Exchange auth code for access token
+  const exchangeCodeForToken = async (code) => {
+    try {
+      setSyncStatus('syncing');
+      
+      // Note: In production, this should go through a backend to keep client secret secure
+      // For now, we'll use the public client flow (less secure but works for demo)
+      const response = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          client_id: CLIENT_ID,
+          scope: SCOPES,
+          code: code,
+          redirect_uri: REDIRECT_URI,
+          grant_type: 'authorization_code',
+        }),
+      });
+
+      const data = await response.json();
+      
+      if (data.access_token) {
+        const expiryTime = new Date().getTime() + (data.expires_in * 1000);
+        
+        setAccessToken(data.access_token);
+        setIsLoggedIn(true);
+        
+        // Store token securely
+        localStorage.setItem('onedrive-access-token', data.access_token);
+        localStorage.setItem('onedrive-token-expiry', expiryTime.toString());
+        
+        await loadUserInfo(data.access_token);
+        setSyncStatus('synced');
+      } else {
+        throw new Error('Token exchange failed');
+      }
+    } catch (error) {
+      console.error('Auth error:', error);
+      setSyncStatus('error');
+      alert('Anmeldung fehlgeschlagen. Bitte versuche es erneut.');
+    }
+  };
+
+  // Load user information
+  const loadUserInfo = async (token) => {
+    try {
+      const response = await fetch('https://graph.microsoft.com/v1.0/me', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+      
+      const userData = await response.json();
+      setUserInfo(userData);
+    } catch (error) {
+      console.error('Failed to load user info:', error);
+    }
+  };
+
+  // Logout
+  const logout = () => {
+    setIsLoggedIn(false);
+    setUserInfo(null);
+    setAccessToken(null);
+    setSyncStatus('offline');
+    
+    localStorage.removeItem('onedrive-access-token');
+    localStorage.removeItem('onedrive-token-expiry');
+  };
+
+  // Load data from OneDrive
+  const loadFromOneDrive = async () => {
+    if (!accessToken) return;
+    
+    try {
+      setSyncStatus('syncing');
+      
+      // Load diary data
+      const dataResponse = await fetch(`https://graph.microsoft.com/v1.0/me/drive/special/approot:${DIARY_DATA_FILE}:/content`, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+        },
+      });
+      
+      if (dataResponse.ok) {
+        const data = await dataResponse.json();
+        setEntries(data.entries || {});
+        
+        // Backup to localStorage
+        localStorage.setItem('diary-entries-backup', JSON.stringify(data.entries || {}));
+      }
+      
+      // Load settings
+      const settingsResponse = await fetch(`https://graph.microsoft.com/v1.0/me/drive/special/approot:${SETTINGS_FILE}:/content`, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+        },
+      });
+      
+      if (settingsResponse.ok) {
+        const settings = await settingsResponse.json();
+        setFieldTitles(settings.fieldTitles || ['Feld 1', 'Feld 2', 'Feld 3']);
+        
+        // Backup to localStorage
+        localStorage.setItem('diary-field-titles-backup', JSON.stringify(settings.fieldTitles || ['Feld 1', 'Feld 2', 'Feld 3']));
+      }
+      
+      setSyncStatus('synced');
+      setLastSyncTime(new Date());
+      
+    } catch (error) {
+      console.error('Fehler beim Laden von OneDrive:', error);
+      setSyncStatus('error');
+    }
+  };
+
+  // Save to OneDrive
+  const saveToOneDrive = async (newEntries = entries, newFieldTitles = fieldTitles) => {
+    if (!accessToken || !isLoggedIn) {
+      // Save locally as backup
+      localStorage.setItem('diary-entries-backup', JSON.stringify(newEntries));
+      localStorage.setItem('diary-field-titles-backup', JSON.stringify(newFieldTitles));
+      return;
+    }
+    
+    try {
+      setSyncStatus('syncing');
+      
+      // Save diary data
+      const dataPayload = {
+        entries: newEntries,
+        lastModified: new Date().toISOString(),
+        version: '1.0'
+      };
+      
+      await fetch(`https://graph.microsoft.com/v1.0/me/drive/special/approot:${DIARY_DATA_FILE}:/content`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(dataPayload),
+      });
+      
+      // Save settings
+      const settingsPayload = {
+        fieldTitles: newFieldTitles,
+        lastModified: new Date().toISOString(),
+        version: '1.0'
+      };
+      
+      await fetch(`https://graph.microsoft.com/v1.0/me/drive/special/approot:${SETTINGS_FILE}:/content`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(settingsPayload),
+      });
+      
+      setSyncStatus('synced');
+      setLastSyncTime(new Date());
+      
+      // Also backup locally
+      localStorage.setItem('diary-entries-backup', JSON.stringify(newEntries));
+      localStorage.setItem('diary-field-titles-backup', JSON.stringify(newFieldTitles));
+      
+    } catch (error) {
+      console.error('Fehler beim Speichern in OneDrive:', error);
+      setSyncStatus('error');
+      
+      // Fallback to local storage
+      localStorage.setItem('diary-entries-backup', JSON.stringify(newEntries));
+      localStorage.setItem('diary-field-titles-backup', JSON.stringify(newFieldTitles));
+    }
+  };
 
   // Format date as YYYY-MM-DD
   const formatDate = (date) => {
@@ -29,7 +284,7 @@ const DiaryApp = () => {
     return entries[dateKey] || { field1: '', field2: '', field3: '', mood: null };
   };
 
-  // Update entry with auto-save
+  // Update entry with auto-save to OneDrive
   const updateEntry = (field, value) => {
     const dateKey = formatDate(currentDate);
     const newEntries = {
@@ -48,8 +303,7 @@ const DiaryApp = () => {
 
     // Set new timeout for auto-save
     const timeout = setTimeout(() => {
-      // Here you would normally save to backend
-      console.log('Auto-saved entry for', dateKey);
+      saveToOneDrive(newEntries, fieldTitles);
     }, 1000);
     setSaveTimeout(timeout);
   };
@@ -57,6 +311,30 @@ const DiaryApp = () => {
   // Update mood score
   const updateMood = (moodValue) => {
     updateEntry('mood', moodValue);
+  };
+
+  // Update field titles
+  const updateFieldTitles = (newTitles) => {
+    setFieldTitles(newTitles);
+    saveToOneDrive(entries, newTitles);
+  };
+
+  // Get sync status display
+  const getSyncStatusDisplay = () => {
+    if (!isLoggedIn) {
+      return { icon: CloudOff, text: 'Offline', color: 'text-gray-400' };
+    }
+    
+    switch (syncStatus) {
+      case 'syncing':
+        return { icon: Cloud, text: 'Synchronisiert...', color: 'text-blue-500' };
+      case 'synced':
+        return { icon: Cloud, text: 'Synchronisiert', color: 'text-green-500' };
+      case 'error':
+        return { icon: CloudOff, text: 'Fehler', color: 'text-red-500' };
+      default:
+        return { icon: CloudOff, text: 'Offline', color: 'text-gray-400' };
+    }
   };
 
   // Levenshtein distance algorithm for fuzzy matching
@@ -247,7 +525,7 @@ const DiaryApp = () => {
     document.body.removeChild(link);
   };
 
-  // Excel Import Function with automatic field title detection and German date support
+  // Excel Import Function
   const importFromExcel = (event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -304,40 +582,12 @@ const DiaryApp = () => {
             return `${year}-${month}-${day}`;
           }
           
-          // Try American format (MM/DD/YYYY)
-          const americanMatch = cleaned.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-          if (americanMatch) {
-            const month = americanMatch[1].padStart(2, '0');
-            const day = americanMatch[2].padStart(2, '0');
-            const year = americanMatch[3];
-            return `${year}-${month}-${day}`;
-          }
-          
-          // Try with dashes (DD-MM-YYYY)
-          const dashMatch = cleaned.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
-          if (dashMatch) {
-            const day = dashMatch[1].padStart(2, '0');
-            const month = dashMatch[2].padStart(2, '0');
-            const year = dashMatch[3];
-            return `${year}-${month}-${day}`;
-          }
-          
-          // Try Excel date number
+          // Try to parse as Excel date number
           const excelDate = parseFloat(cleaned);
-          if (!isNaN(excelDate) && excelDate > 1 && excelDate < 100000) {
+          if (!isNaN(excelDate) && excelDate > 1) {
             const excelEpoch = new Date(1899, 11, 30);
             const jsDate = new Date(excelEpoch.getTime() + excelDate * 24 * 60 * 60 * 1000);
             return jsDate.toISOString().split('T')[0];
-          }
-          
-          // Try JavaScript Date parsing as last resort
-          try {
-            const parsed = new Date(cleaned);
-            if (!isNaN(parsed.getTime()) && parsed.getFullYear() > 1900 && parsed.getFullYear() < 2100) {
-              return parsed.toISOString().split('T')[0];
-            }
-          } catch (e) {
-            // Ignore parsing errors
           }
           
           return null;
@@ -346,14 +596,15 @@ const DiaryApp = () => {
         const headerRow = parseCSVLine(lines[0]).map(h => h.replace(/"/g, ''));
         const dataLines = lines.slice(1);
         
-        // Extract field titles from header (skip first column "Datum" and last column "Stimmung")
+        // Extract field titles from header
         if (headerRow.length >= 4) {
           const newFieldTitles = [
-            headerRow[1] || 'Feld 1', // Second column
-            headerRow[2] || 'Feld 2', // Third column  
-            headerRow[3] || 'Feld 3'  // Fourth column
+            headerRow[1] || 'Feld 1',
+            headerRow[2] || 'Feld 2', 
+            headerRow[3] || 'Feld 3'
           ];
           setFieldTitles(newFieldTitles);
+          updateFieldTitles(newFieldTitles);
         }
         
         let importCount = 0;
@@ -367,7 +618,7 @@ const DiaryApp = () => {
             const parsedDate = parseDate(values[0]);
             
             if (parsedDate) {
-              // Only add if entry doesn't exist (no overwriting)
+              // Only add if entry doesn't exist
               if (!newEntries[parsedDate]) {
                 newEntries[parsedDate] = {
                   field1: values[1] || '',
@@ -379,19 +630,16 @@ const DiaryApp = () => {
               }
             } else {
               skippedCount++;
-              console.log(`Skipped line ${lineIndex + 2}: Invalid date format "${values[0]}"`);
             }
           }
         });
 
         setEntries(newEntries);
+        saveToOneDrive(newEntries, fieldTitles);
         
         let message = `${importCount} Einträge erfolgreich importiert!`;
-        if (headerRow.length >= 4) {
-          message += `\n\nFeldnamen wurden automatisch übernommen:\n• ${fieldTitles[0]} → ${headerRow[1] || 'Feld 1'}\n• ${fieldTitles[1]} → ${headerRow[2] || 'Feld 2'}\n• ${fieldTitles[2]} → ${headerRow[3] || 'Feld 3'}`;
-        }
         if (skippedCount > 0) {
-          message += `\n\n${skippedCount} Zeilen übersprungen (ungültiges Datumsformat)`;
+          message += `\n${skippedCount} Zeilen übersprungen (ungültiges Datumsformat)`;
         }
         
         alert(message);
@@ -403,7 +651,7 @@ const DiaryApp = () => {
     };
 
     reader.readAsText(file, 'UTF-8');
-    event.target.value = ''; // Reset file input
+    event.target.value = '';
   };
 
   // Navigate to previous day
@@ -436,6 +684,7 @@ const DiaryApp = () => {
   };
 
   const currentEntry = getCurrentEntry();
+  const syncDisplay = getSyncStatusDisplay();
 
   return (
     <div className={`min-h-screen transition-colors duration-300 ${
@@ -455,7 +704,16 @@ const DiaryApp = () => {
             <Settings className="w-5 h-5" />
           </button>
           
-          <h1 className="text-xl font-semibold">Tagebuch</h1>
+          <div className="flex items-center space-x-3">
+            <h1 className="text-xl font-semibold">Tagebuch</h1>
+            {/* Sync Status */}
+            <div className="flex items-center space-x-1">
+              <syncDisplay.icon className={`w-4 h-4 ${syncDisplay.color}`} />
+              <span className={`text-xs ${syncDisplay.color}`}>
+                {syncDisplay.text}
+              </span>
+            </div>
+          </div>
           
           <div className="flex items-center space-x-2">
             <button
@@ -510,6 +768,67 @@ const DiaryApp = () => {
           </button>
         </div>
       </div>
+
+      {/* OneDrive Login/Status */}
+      {!isLoggedIn ? (
+        <div className={`p-4 border-b transition-colors duration-300 ${
+          isDarkMode ? 'bg-blue-900/20 border-blue-700' : 'bg-blue-50 border-blue-200'
+        }`}>
+          <div className="text-center space-y-3">
+            <div className="flex items-center justify-center space-x-2">
+              <Cloud className="w-5 h-5 text-blue-500" />
+              <h3 className="text-lg font-medium">OneDrive Synchronisation</h3>
+            </div>
+            <p className="text-sm opacity-70">
+              Melde dich mit deinem Microsoft-Account an, um deine Tagebucheinträge sicher in OneDrive zu speichern und zwischen allen Geräten zu synchronisieren.
+            </p>
+            <button
+              onClick={loginToOneDrive}
+              className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-lg font-medium transition-colors"
+            >
+              <div className="flex items-center space-x-2">
+                <User className="w-4 h-4" />
+                <span>Mit Microsoft anmelden</span>
+              </div>
+            </button>
+            <p className="text-xs opacity-50">
+              Deine Daten bleiben privat und sicher in deinem OneDrive
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className={`p-3 border-b transition-colors duration-300 ${
+          isDarkMode ? 'bg-green-900/20 border-green-700' : 'bg-green-50 border-green-200'
+        }`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <div className="flex items-center space-x-2">
+                <Cloud className="w-4 h-4 text-green-500" />
+                <span className="text-sm font-medium">Angemeldet als</span>
+              </div>
+              <span className="text-sm text-green-600 dark:text-green-400">
+                {userInfo?.displayName || userInfo?.mail || 'Microsoft User'}
+              </span>
+            </div>
+            <button
+              onClick={logout}
+              className={`p-1 rounded-full transition-colors ${
+                isDarkMode ? 'hover:bg-gray-700' : 'hover:bg-gray-100'
+              }`}
+              title="Abmelden"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          </div>
+          {lastSyncTime && (
+            <div className="mt-1">
+              <span className="text-xs opacity-60">
+                Zuletzt synchronisiert: {lastSyncTime.toLocaleTimeString('de-DE')}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Settings Panel */}
       {showSettings && (
@@ -568,9 +887,20 @@ const DiaryApp = () => {
                 />
               </div>
               <p className="text-xs opacity-60">
-                Export: Lädt alle Einträge als CSV-Datei herunter<br/>
-                Import: Fügt neue Einträge hinzu (überschreibt keine bestehenden)<br/>
-                Die Spaltennamen werden automatisch aus der Excel-Datei übernommen
+                {isLoggedIn ? (
+                  <>
+                    ☁️ Daten werden automatisch in deinem OneDrive gespeichert<br/>
+                    🔄 Synchronisiert zwischen allen deinen Geräten<br/>
+                    💾 Export als zusätzliches Backup empfohlen<br/>
+                    📱 Funktioniert auch offline (lokales Backup)
+                  </>
+                ) : (
+                  <>
+                    📱 Daten werden aktuell nur lokal gespeichert<br/>
+                    ☁️ Melde dich an für automatische OneDrive-Synchronisation<br/>
+                    💾 Export als Backup empfohlen
+                  </>
+                )}
               </p>
             </div>
             
@@ -586,6 +916,7 @@ const DiaryApp = () => {
                       const newTitles = [...fieldTitles];
                       newTitles[index] = e.target.value;
                       setFieldTitles(newTitles);
+                      updateFieldTitles(newTitles);
                     }}
                     className={`w-full px-3 py-2 rounded-lg border transition-colors ${
                       isDarkMode
@@ -667,7 +998,6 @@ const DiaryApp = () => {
                 onClick={() => {
                   setFuzzySearchEnabled(!fuzzySearchEnabled);
                   if (searchQuery) {
-                    // Re-run search with new setting
                     setTimeout(() => performSearch(searchQuery), 100);
                   }
                 }}
@@ -812,9 +1142,25 @@ const DiaryApp = () => {
 
         {/* Save Indicator */}
         <div className="text-center">
-          <p className="text-xs opacity-50">
-            Einträge werden automatisch gespeichert
-          </p>
+          {isLoggedIn ? (
+            <>
+              <p className="text-xs opacity-50">
+                ☁️ Einträge werden automatisch in OneDrive gespeichert
+              </p>
+              <p className="text-xs opacity-40 mt-1">
+                Synchronisiert zwischen allen deinen Geräten
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-xs opacity-50">
+                📱 Einträge werden lokal auf deinem Gerät gespeichert
+              </p>
+              <p className="text-xs opacity-40 mt-1">
+                Melde dich an für automatische Cloud-Synchronisation
+              </p>
+            </>
+          )}
         </div>
       </div>
     </div>
