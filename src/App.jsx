@@ -247,7 +247,7 @@ const DiaryApp = () => {
     document.body.removeChild(link);
   };
 
-  // Excel Import Function with automatic field title detection
+  // Excel Import Function with automatic field title detection and German date support
   const importFromExcel = (event) => {
     const file = event.target.files[0];
     if (!file) return;
@@ -284,6 +284,37 @@ const DiaryApp = () => {
           return result;
         };
 
+        // Parse date in multiple formats
+        const parseDate = (dateString) => {
+          if (!dateString) return null;
+          
+          const cleaned = dateString.replace(/"/g, '').trim();
+          
+          // Try ISO format first (YYYY-MM-DD)
+          if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(cleaned)) {
+            return cleaned;
+          }
+          
+          // Try German format (DD.MM.YYYY or DD/MM/YYYY)
+          const germanMatch = cleaned.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})$/);
+          if (germanMatch) {
+            const day = germanMatch[1].padStart(2, '0');
+            const month = germanMatch[2].padStart(2, '0');
+            const year = germanMatch[3];
+            return `${year}-${month}-${day}`;
+          }
+          
+          // Try to parse as Excel date number
+          const excelDate = parseFloat(cleaned);
+          if (!isNaN(excelDate) && excelDate > 1) {
+            const excelEpoch = new Date(1899, 11, 30);
+            const jsDate = new Date(excelEpoch.getTime() + excelDate * 24 * 60 * 60 * 1000);
+            return jsDate.toISOString().split('T')[0];
+          }
+          
+          return null;
+        };
+
         const headerRow = parseCSVLine(lines[0]).map(h => h.replace(/"/g, ''));
         const dataLines = lines.slice(1);
         
@@ -298,18 +329,19 @@ const DiaryApp = () => {
         }
         
         let importCount = 0;
+        let skippedCount = 0;
         const newEntries = { ...entries };
 
-        dataLines.forEach(line => {
+        dataLines.forEach((line, lineIndex) => {
           const values = parseCSVLine(line).map(v => v.replace(/"/g, ''));
           
           if (values.length >= 4) {
-            const date = values[0];
-            // Validate date format
-            if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            const parsedDate = parseDate(values[0]);
+            
+            if (parsedDate) {
               // Only add if entry doesn't exist (no overwriting)
-              if (!newEntries[date]) {
-                newEntries[date] = {
+              if (!newEntries[parsedDate]) {
+                newEntries[parsedDate] = {
                   field1: values[1] || '',
                   field2: values[2] || '',
                   field3: values[3] || '',
@@ -317,12 +349,24 @@ const DiaryApp = () => {
                 };
                 importCount++;
               }
+            } else {
+              skippedCount++;
+              console.log(`Skipped line ${lineIndex + 2}: Invalid date format "${values[0]}"`);
             }
           }
         });
 
         setEntries(newEntries);
-        alert(`${importCount} Einträge erfolgreich importiert!\n\nFeldnamen wurden automatisch übernommen:\n• ${fieldTitles[0]} → ${headerRow[1] || 'Feld 1'}\n• ${fieldTitles[1]} → ${headerRow[2] || 'Feld 2'}\n• ${fieldTitles[2]} → ${headerRow[3] || 'Feld 3'}`);
+        
+        let message = `${importCount} Einträge erfolgreich importiert!`;
+        if (headerRow.length >= 4) {
+          message += `\n\nFeldnamen wurden automatisch übernommen:\n• ${fieldTitles[0]} → ${headerRow[1] || 'Feld 1'}\n• ${fieldTitles[1]} → ${headerRow[2] || 'Feld 2'}\n• ${fieldTitles[2]} → ${headerRow[3] || 'Feld 3'}`;
+        }
+        if (skippedCount > 0) {
+          message += `\n\n${skippedCount} Zeilen übersprungen (ungültiges Datumsformat)`;
+        }
+        
+        alert(message);
         
       } catch (error) {
         console.error('Import error:', error);
