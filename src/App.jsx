@@ -304,12 +304,40 @@ const DiaryApp = () => {
             return `${year}-${month}-${day}`;
           }
           
-          // Try to parse as Excel date number
+          // Try American format (MM/DD/YYYY)
+          const americanMatch = cleaned.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+          if (americanMatch) {
+            const month = americanMatch[1].padStart(2, '0');
+            const day = americanMatch[2].padStart(2, '0');
+            const year = americanMatch[3];
+            return `${year}-${month}-${day}`;
+          }
+          
+          // Try with dashes (DD-MM-YYYY)
+          const dashMatch = cleaned.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+          if (dashMatch) {
+            const day = dashMatch[1].padStart(2, '0');
+            const month = dashMatch[2].padStart(2, '0');
+            const year = dashMatch[3];
+            return `${year}-${month}-${day}`;
+          }
+          
+          // Try Excel date number
           const excelDate = parseFloat(cleaned);
-          if (!isNaN(excelDate) && excelDate > 1) {
+          if (!isNaN(excelDate) && excelDate > 1 && excelDate < 100000) {
             const excelEpoch = new Date(1899, 11, 30);
             const jsDate = new Date(excelEpoch.getTime() + excelDate * 24 * 60 * 60 * 1000);
             return jsDate.toISOString().split('T')[0];
+          }
+          
+          // Try JavaScript Date parsing as last resort
+          try {
+            const parsed = new Date(cleaned);
+            if (!isNaN(parsed.getTime()) && parsed.getFullYear() > 1900 && parsed.getFullYear() < 2100) {
+              return parsed.toISOString().split('T')[0];
+            }
+          } catch (e) {
+            // Ignore parsing errors
           }
           
           return null;
