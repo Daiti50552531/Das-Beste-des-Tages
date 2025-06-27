@@ -616,3 +616,137 @@ const DiaryApp = () => {
             {/* Search Results */}
             {searchResults.length > 0 && (
               <div className="mt-4 max-h-80 overflow-y-auto space-y-3">
+                <p className="text-sm opacity-70">
+                  {searchResults.length} Ergebnis{searchResults.length > 1 ? 'se' : ''} gefunden
+                  {fuzzySearchEnabled && ' (inkl. ähnliche Wörter)'}
+                </p>
+                {searchResults.map((result, index) => (
+                  <div
+                    key={index}
+                    onClick={() => goToDate(result.date)}
+                    className={`p-3 rounded-lg cursor-pointer transition-colors ${
+                      isDarkMode
+                        ? 'bg-gray-700 hover:bg-gray-600'
+                        : 'bg-gray-50 hover:bg-gray-100'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-sm font-medium text-blue-500">
+                          {result.displayDate}
+                        </span>
+                        {result.mood && (
+                          <span className="text-sm">
+                            {getMoodDisplay(result.mood).emoji}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        {result.matches.some(m => m.isFuzzy) && (
+                          <span className="text-xs px-2 py-1 rounded-full bg-orange-100 text-orange-600 dark:bg-orange-900 dark:text-orange-300">
+                            ähnlich
+                          </span>
+                        )}
+                        <span className="text-xs opacity-50">
+                          {result.matches.length} Treffer
+                        </span>
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      {result.matches.map((match, matchIndex) => (
+                        <div key={matchIndex} className="text-sm">
+                          <span className="font-medium opacity-70">
+                            {match.title}:
+                          </span>
+                          <span className={`ml-2 ${match.isFuzzy ? 'opacity-75' : 'opacity-90'}`}>
+                            {match.context}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            
+            {searchQuery && searchResults.length === 0 && (
+              <div className="mt-4 text-center py-4">
+                <p className="text-sm opacity-50">
+                  Keine Einträge gefunden für "{searchQuery}"
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Main Content */}
+      <div className="p-4 space-y-6 pb-8">
+        {/* Mood Selector */}
+        <div className="space-y-3">
+          <label className="block text-sm font-medium opacity-70">
+            Wie war dein Tag?
+          </label>
+          <div className="flex items-center justify-between">
+            {[1, 2, 3].map((moodValue) => {
+              const moodDisplay = getMoodDisplay(moodValue);
+              const isSelected = currentEntry.mood === moodValue;
+              return (
+                <button
+                  key={moodValue}
+                  onClick={() => updateMood(moodValue)}
+                  className={`flex-1 p-4 mx-1 rounded-xl transition-all duration-200 ${
+                    isSelected
+                      ? isDarkMode
+                        ? 'bg-blue-600 shadow-lg transform scale-105'
+                        : 'bg-blue-500 shadow-lg transform scale-105'
+                      : isDarkMode
+                        ? 'bg-gray-800 hover:bg-gray-700'
+                        : 'bg-white hover:bg-gray-50 shadow-sm'
+                  }`}
+                >
+                  <div className="text-center">
+                    <div className="text-2xl mb-1">{moodDisplay.emoji}</div>
+                    <div className={`text-xs font-medium ${
+                      isSelected ? 'text-white' : moodDisplay.color
+                    }`}>
+                      {moodDisplay.label}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {fieldTitles.map((title, index) => (
+          <div key={index} className="space-y-2">
+            <label className="block text-sm font-medium opacity-70">
+              {title}
+            </label>
+            <textarea
+              value={currentEntry[`field${index + 1}`]}
+              onChange={(e) => updateEntry(`field${index + 1}`, e.target.value)}
+              rows={3}
+              className={`w-full px-4 py-3 rounded-xl border-0 resize-none transition-all duration-200 ${
+                isDarkMode
+                  ? 'bg-gray-800 text-white placeholder-gray-400 focus:bg-gray-750'
+                  : 'bg-white text-gray-900 placeholder-gray-500 focus:bg-gray-50'
+              } shadow-sm focus:shadow-md focus:ring-2 focus:ring-blue-500 focus:outline-none`}
+              placeholder={`Deine ${title.toLowerCase()} für heute...`}
+            />
+          </div>
+        ))}
+
+        {/* Save Indicator */}
+        <div className="text-center">
+          <p className="text-xs opacity-50">
+            Einträge werden automatisch gespeichert
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default DiaryApp;
