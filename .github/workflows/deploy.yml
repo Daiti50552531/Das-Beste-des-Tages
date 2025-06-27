@@ -1,4 +1,5 @@
-yamlname: Deploy to GitHub Pages
+yaml
+name: Deploy to GitHub Pages
 
 on:
   push:
