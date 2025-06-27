@@ -28,7 +28,7 @@ const DiaryApp = () => {
   const [saveTimeout, setSaveTimeout] = useState(null);
 
   // Google Drive API Configuration
-  const CLIENT_ID = 'DEINE_GOOGLE_CLIENT_ID'; // Wird später ersetzt
+  const CLIENT_ID = '941887717440-0qkt02depoav35g7mkqgor4dqpqhostb.apps.googleusercontent.com'; // Wird später ersetzt
   const API_KEY = 'DEIN_GOOGLE_API_KEY'; // Wird später ersetzt
   const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest';
   const SCOPES = 'https://www.googleapis.com/auth/drive.file';
