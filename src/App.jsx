@@ -29,7 +29,7 @@ const DiaryApp = () => {
 
   // Google Drive API Configuration
   const CLIENT_ID = '941887717440-0qk02depoav35g7mkqgor4tqjqqhosbb.apps.googleusercontent.com'; // Wird später ersetzt
-  const API_KEY = 'AIzaSyDMSa_PZ41_l9vLrsO_MIU5s4Ju2Z-imYs'; // Wird später ersetzt
+  const API_KEY = 'XYZ'; // Wird später ersetzt
   const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest';
   const SCOPES = 'https://www.googleapis.com/auth/drive.file';
 
